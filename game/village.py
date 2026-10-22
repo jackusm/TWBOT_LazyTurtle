@@ -700,6 +700,9 @@ class Village:
         self.attack.report_max_age_hours = self.get_config(
             section="farms", parameter="report_max_age_hours", default=24
         )
+        self.attack.scout_recheck_hours = self.get_config(
+            section="farms", parameter="scout_recheck_hours", default=4
+        )
         self.attack.max_kind_refusals = self.get_config(
             section="farms", parameter="max_kind_refusals", default=3
         )

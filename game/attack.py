@@ -91,6 +91,10 @@ class AttackManager:
     report_max_age_hours = 24
     # How long to wait before retrying a target we just sent a scout to (report still in transit)
     scout_wait = 900
+    # Per-target floor between scout (A) sends, in hours. Scouting exists to refresh
+    # intel on targets we cannot farm blind; re-scouting one every pass burns a send
+    # slot and its delay for the same "no report / old report" answer each time.
+    scout_recheck_hours = 4
 
     # Only run the farming logic once per this random window (seconds), independent of how
     # often the rest of the village loop ticks - keeps the send cadence less bot-like
@@ -260,7 +264,15 @@ class AttackManager:
             report_id, extra, age = self.repman.latest_for(vid, report_type="scout")
 
         if report_id is None or age is None or age > self.report_max_age_hours * 3600:
-            # No report, or too old to trust at all -> re-scout
+            # No report, or too old to trust at all -> re-scout, but no more often
+            # than scout_recheck_hours: the answer ("still nothing known") will not
+            # have changed since the last scout this soon, so hold the send slot.
+            if not self.scout_recheck_due(vid):
+                self.logger.debug(
+                    "%s: scout throttled (last one < %dh ago), skipping this pass",
+                    vid, self.scout_recheck_hours,
+                )
+                return
             self._send(vid, kind="scout")
             return
 
@@ -271,6 +283,13 @@ class AttackManager:
             )
             return
         if status != 1:
+            # Last report showed defenders: the target needs eyes on it again, but
+            # re-scouting a camper every farm pass is scout spam, not farming.
+            if not self.scout_recheck_due(vid):
+                self.logger.debug(
+                    "%s: defenders seen and scout throttled, skipping", vid
+                )
+                return
             self._send(vid, kind="scout")
             return
 
@@ -524,7 +543,23 @@ class AttackManager:
             "kind": kind,
             "last_attack": int(time.time()),
         }
+        if kind == "scout":
+            # Kept separately from kind/last_attack so the scout throttle below
+            # survives a later farm send overwriting the entry's kind.
+            cache_entry["last_scout"] = cache_entry["last_attack"]
         AttackCache.set_cache(vid, cache_entry)
+
+    def scout_recheck_due(self, vid):
+        """
+        True when another scout (A) send to this target is allowed. A farm send in
+        between overwrites the cache kind, hence the dedicated last_scout stamp.
+        Targets with no cache entry at all have never been touched - scouting them
+        is exactly right.
+        """
+        entry = AttackCache.get_cache(vid)
+        if not entry or not entry.get("last_scout"):
+            return True
+        return int(entry["last_scout"]) + self.scout_recheck_hours * 3600 <= int(time.time())
 
     def has_troops_available(self, troops):
         for t in troops:
