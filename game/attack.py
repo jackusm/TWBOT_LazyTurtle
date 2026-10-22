@@ -127,6 +127,8 @@ class AttackManager:
         # the Farm Assistant page each run - see _out_of_troops.
         self._template_units = {}
         self._units_home = None
+        # Set fresh by fetch_farm_icons every pass: no farm rows on the page
+        self.farm_locked = False
 
     def run(self):
         """
@@ -146,6 +148,8 @@ class AttackManager:
             return False
         self.get_targets()
         self.farm_icons = self.fetch_farm_icons()
+        if self.farm_locked:
+            return False
         self._kind_refusals = {}
         self._exhausted_kinds = set()
         # Limits the amount of villages that are farmed from the current village
@@ -189,14 +193,30 @@ class AttackManager:
         same data the in-game page uses to grey out an icon (not enough troops, or the
         wall makes the attack a guaranteed loss), and for C it includes the exact troop
         forecast the game calculated, which we otherwise can't see ahead of sending.
+
+        Sets farm_locked when the page carries no farm rows at all: either the Loot
+        Assistant is not active (the page is a premium upsell) or the markup changed.
+        Either way there are no forecasts and no sendable templates, so farming must
+        not attempt sends. Re-evaluated every pass, so buying the feature mid-run
+        picks up on the next pass.
         """
+        self.farm_locked = False
         res = self.wrapper.get_url(f"game.php?village={self.village_id}&screen=am_farm")
         self._template_units, self._units_home = {}, None
         if not res:
             return {}
         self._template_units = Extractor.farm_assistant_templates(res)
         self._units_home = Extractor.farm_assistant_units(res)
-        return Extractor.farm_assistant_icons(res)
+        rows = Extractor.farm_assistant_icons(res)
+        if rows:
+            return rows
+        # No rows: no forecasts and no sendable templates. Either the Loot
+        # Assistant (premium) is inactive on this account or the markup changed.
+        self.logger.warning(
+            "am_farm page rendered no farm rows - farming disabled this pass"
+        )
+        self.farm_locked = True
+        return {}
 
     def _template_for(self, kind):
         """The troops an A ("scout") or B ("minimal") send takes, or None when

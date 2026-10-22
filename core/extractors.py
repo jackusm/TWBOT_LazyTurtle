@@ -66,7 +66,10 @@ _RE_REPORT_TABLE = re.compile(r'(?s)class="report-link" data-id="(\d+)"')
 _RE_REPORT_GROUP_SELECT = re.compile(r'(?s)<select name="group_id".+?</select>')
 _RE_OPTION_VALUE = re.compile(r'<option value="(\d+)"')
 _RE_FARM_ICON = re.compile(
-    r'<a([^>]*class="farm_village_(\d+) farm_icon farm_icon_([a-d])[^"]*"[^>]*)>')
+    # Class tokens may precede farm_village_ (UK worlds emit
+    # class="tooltip farm_village_N farm_icon farm_icon_x"); older/markets
+    # without the prefix still match because [^"]* also accepts nothing.
+    r'<a([^>]*class="[^"]*farm_village_(\d+) farm_icon farm_icon_([a-d])[^"]*"[^>]*)>')
 _RE_FORECAST = re.compile(r'data-units-forecast="([^"]*)"')
 # The same page's template editor and the troop count its buttons are greyed
 # out against: what each template sends, and what is home to send.
