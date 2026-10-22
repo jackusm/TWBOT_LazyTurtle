@@ -10,6 +10,52 @@ from datetime import datetime
 from core.extractors import Extractor
 from core.filemanager import FileManager
 
+# Report dates arrive in one of two shapes depending on market: NL-style
+# "dd.mm.yy" and UK/en-style "Mon dd, yyyy" (e.g. "Oct 20, 2026"). Map the
+# month abbreviations explicitly instead of relying on strptime "%b", which
+# is locale-dependent - the bot container may not run an English locale.
+_REPORT_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    # Client-language aliases that differ from the English abbreviation
+    "okt": 10, "dez": 12, "mär": 3, "mai": 5,
+}
+
+# One tolerant pattern for both date shapes, anchored on the millisecond span
+# (combat reports):
+#   NL: "20.10.26 22:19:24"   UK: "Oct 20, 2026  22:19:24" (double space)
+_RE_REPORT_WHEN = re.compile(
+    r'(\d{2}\.\d{2}\.\d{2}|[A-Za-z]{3} \d{1,2}, \d{4})\s+(\d{2}:\d{2}:\d{2})'
+    r'<span class="small grey">'
+)
+# Same tolerant date shapes for other report types, anchored on tag boundaries
+# (the surrounding page has no millisecond span there; the server clock can't
+# collide - it is split over two spans and uses a 4-digit, slash-separated date).
+_RE_REPORT_WHEN_TAGS = re.compile(
+    r'>\s*(\d{2}\.\d{2}\.\d{2}|[A-Za-z]{3} \d{1,2}, \d{4})\s+(\d{2}:\d{2}:\d{2})\s*<'
+)
+
+
+def _parse_report_when(date_part, time_part):
+    """
+    Parses a report timestamp in either supported shape into a unix timestamp.
+    Returns None on anything unparsable rather than crashing the report parse.
+    """
+    try:
+        hour, minute, second = (int(x) for x in time_part.split(":"))
+        if "." in date_part:
+            day, month, year = (int(x) for x in date_part.split("."))
+            year += 2000
+        else:
+            mon, day, year = date_part.replace(",", "").split()
+            month = _REPORT_MONTHS.get(mon.lower()[:3])
+            if month is None:
+                return None
+            day, year = int(day), int(year)
+        return int(datetime(year, month, day, hour, minute, second).timestamp())
+    except (ValueError, TypeError):
+        return None
+
 
 class ReportManager:
     """
@@ -255,15 +301,13 @@ class ReportManager:
                     # own server clock can't collide: it is split over two spans
                     # and uses a 4-digit, slash-separated date.
                     extra = {}
-                    when_match = re.search(
-                        r'>\s*(\d{2}\.\d{2}\.\d{2} \d{2}\:\d{2}\:\d{2})\s*<',
-                        data.text)
+                    when_match = _RE_REPORT_WHEN_TAGS.search(data.text)
                     if when_match:
-                        try:
-                            extra["when"] = int(datetime.strptime(
-                                when_match.group(1), "%d.%m.%y %H:%M:%S").timestamp())
-                        except ValueError:
-                            pass
+                        parsed = _parse_report_when(
+                            when_match.group(1), when_match.group(2)
+                        )
+                        if parsed is not None:
+                            extra["when"] = parsed
                     res = self.put(report_id, report_type=report_type, data=extra)
                     self.last_reports[report_id] = res
         if new == 12 or full_run and page < 20:
@@ -313,9 +357,14 @@ class ReportManager:
 
         losses = {}
 
-        attacked = re.search(r'(\d{2}\.\d{2}\.\d{2} \d{2}\:\d{2}\:\d{2})<span class=\"small grey\">', report)
+        # UK renders "Battle time" as "Oct 20, 2026  22:19:24", NL as
+        # "20.10.26 22:19:24" - both directly followed by the millisecond
+        # span, so one tolerant pattern covers both markets.
+        attacked = _RE_REPORT_WHEN.search(report)
         if attacked:
-            extra["when"] = int(datetime.strptime(attacked.group(1), "%d.%m.%y %H:%M:%S").timestamp())
+            parsed = _parse_report_when(attacked.group(1), attacked.group(2))
+            if parsed is not None:
+                extra["when"] = parsed
 
         attacker = re.search(r'(?s)(<table id="attack_info_att".+?</table>)', report)
         if attacker:
