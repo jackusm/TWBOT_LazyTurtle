@@ -26,6 +26,15 @@ fi
 
 # server.py does sys.path.insert(0, "../"), so it only imports correctly when
 # its working directory is webmanager/.
+# Import smoke test first: the code is bind-mounted, so a broken edit can
+# reach the container without ever passing a build. Refuse to spawn children
+# with code that cannot import - the restart policy retries with backoff and
+# the reason sits at the top of `docker compose logs`.
+if ! "$PY" twb.py -i; then
+    echo "[entrypoint] import check failed - fix the code and docker compose restart"
+    exit 1
+fi
+
 (cd webmanager && exec "$PY" server.py "$PORT" 0.0.0.0) &
 DASHBOARD_PID=$!
 echo "[entrypoint] dashboard listening on 0.0.0.0:$PORT (pid $DASHBOARD_PID)"

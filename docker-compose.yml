@@ -2,8 +2,12 @@
 #
 #   docker compose up -d        start (builds the image the first time)
 #   docker compose logs -f      watch what the bot is doing
-#   docker compose restart      restart after changing a config by hand
+#   docker compose restart      restart after changing code or config - the
+#                               code is mounted, no rebuild needed
 #   docker compose down         stop
+#
+# Only a change to requirements.txt (or the Dockerfile itself) needs a
+# rebuild: docker compose up -d --build.
 #
 # Then open http://localhost:5000/ and add your world there.
 # Settings live in .env - copy .env.example to .env to change them.
@@ -23,18 +27,20 @@ services:
         max-size: "10m"
         max-file: "3"
     ports:
-      - "${PORT:-5000}:5000"
+      - "${PORT:-5000}:${PORT:-5000}"
     environment:
       # Your timezone, so active_hours and night scavenging line up with the game.
       TZ: "${TZ:-Europe/Amsterdam}"
       # Space-separated worlds to auto-start, e.g. "nl99 nl98".
       # Leave empty to start them from the dashboard by hand instead.
       WORLDS: "${WORLDS:-}"
+    # Everything else in .env lands in the container env verbatim - the bot's
+    # HTTP stack (python-requests) honors HTTPS_PROXY/NO_PROXY natively.
+    env_file:
+      - .env
     volumes:
-      # Your worlds: config, cookies, cache and reports. This is the data that
-      # matters - back this folder up.
-      - ./worlds:/app/worlds
-      # Building/unit templates, so you can edit them without rebuilding.
-      - ./templates:/app/templates
-      # Logs from a no-world (single-world) run.
-      - ./cache:/app/cache
+      # The whole checkout, code included: edits go live with just
+      # `docker compose restart`, no rebuild. Worlds (configs, cookies,
+      # reports), templates and cache live inside it too - that is the data
+      # that matters, back those folders up.
+      - .:/app
